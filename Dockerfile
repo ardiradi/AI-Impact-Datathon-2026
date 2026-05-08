@@ -1,20 +1,23 @@
-# Menggunakan base image Python versi 3.10 yang ringan
-FROM python:3.10-slim
+# ── Base Image ────────────────────────────────────────────────────────────────
+FROM python:3.9
 
-# Menentukan working directory di dalam container
+# ── Hugging Face Spaces: buat user non-root ──────────────────────────────────
+RUN useradd -m -u 1000 user
+USER user
+ENV PATH="/home/user/.local/bin:$PATH"
+
+# ── Working Directory ────────────────────────────────────────────────────────
 WORKDIR /app
 
-# Menyalin requirements.txt terlebih dahulu (untuk optimasi caching layer Docker)
-COPY requirements.txt .
+# ── Install Dependencies ─────────────────────────────────────────────────────
+COPY --chown=user ./requirements.txt requirements.txt
+RUN pip install --no-cache-dir --upgrade -r requirements.txt
 
-# Menginstal semua dependencies tanpa menyimpan cache untuk mengecilkan ukuran image
-RUN pip install --no-cache-dir -r requirements.txt
+# ── Copy Application Files ───────────────────────────────────────────────────
+COPY --chown=user . /app
 
-# Menyalin seluruh sisa source code dan file .pkl model ke dalam container
-COPY . .
+# ── Expose Port (Hugging Face Spaces menggunakan 7860) ───────────────────────
+EXPOSE 7860
 
-# Mengekspos port 8000 yang akan di-listen oleh uvicorn
-EXPOSE 8000
-
-# Perintah utama untuk menjalankan FastAPI dengan Uvicorn
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# ── Run Server ───────────────────────────────────────────────────────────────
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "7860"]

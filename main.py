@@ -1,85 +1,118 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
+"""
+main.py — FastAPI Backend API untuk prediksi Daya Beli Score
+menggunakan model RandomForestRegressor yang sudah dilatih (model.pkl).
+
+Endpoint:
+  GET  /         -> Health check / status server
+  POST /predict  -> Prediksi Daya_Beli_Score berdasarkan Suku_Bunga & Indeks_Saham
+"""
+
+import os
 import joblib
 import numpy as np
-import os
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
+# ── Load Model ───────────────────────────────────────────────────────────────
+MODEL_PATH = os.path.join(os.path.dirname(__file__), "model.pkl")
+model = joblib.load(MODEL_PATH)
+
+# ── FastAPI App ──────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="Macroeconomy & UMKM Predictor API",
-    description="REST API untuk memprediksi Daya Beli Masyarakat dan memberikan rekomendasi aksi UMKM.",
-    version="1.0.0"
+    title="Ekonomi Makro - Daya Beli Predictor",
+    description="API untuk memprediksi Daya Beli Score UMKM berdasarkan indikator ekonomi makro.",
+    version="1.0.0",
 )
 
-# Global variable untuk menyimpan model yang di-load
-MODEL_PATH = "rf_dayabeli_model.pkl"
-model = None
+# ── CORS Middleware ──────────────────────────────────────────────────────────
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-@app.on_event("startup")
-def load_model():
-    global model
-    if os.path.exists(MODEL_PATH):
-        try:
-            model = joblib.load(MODEL_PATH)
-            print(f"Model {MODEL_PATH} berhasil di-load.")
-        except Exception as e:
-            print(f"Gagal me-load model: {e}")
+
+# ── Pydantic Schema ─────────────────────────────────────────────────────────
+class MacroInput(BaseModel):
+    Suku_Bunga: float
+    Indeks_Saham: float
+
+
+# ── Helper: Rekomendasi Strategis ────────────────────────────────────────────
+def generate_rekomendasi(suku_bunga: float, indeks_saham: float, score: float) -> str:
+    """Menghasilkan kalimat rekomendasi strategis untuk UMKM berdasarkan hasil prediksi."""
+
+    if score >= 95:
+        outlook = "sangat tinggi"
+        saran = (
+            "Ini adalah momentum terbaik untuk ekspansi bisnis. "
+            "UMKM disarankan untuk menambah lini produk, memperluas jangkauan pasar digital, "
+            "dan mempertimbangkan investasi pada kapasitas produksi."
+        )
+    elif score >= 85:
+        outlook = "baik"
+        saran = (
+            "Kondisi daya beli cukup mendukung pertumbuhan. "
+            "UMKM disarankan untuk mengoptimalkan strategi pemasaran, "
+            "menjaga efisiensi operasional, dan mulai membangun cadangan modal kerja."
+        )
+    elif score >= 75:
+        outlook = "moderat"
+        saran = (
+            "Daya beli masyarakat berada di level menengah. "
+            "UMKM sebaiknya fokus pada retensi pelanggan, menekan biaya produksi, "
+            "dan mempertimbangkan diversifikasi produk untuk menjaga stabilitas pendapatan."
+        )
     else:
-        print(f"Warning: File {MODEL_PATH} tidak ditemukan. API akan menggunakan simulasi perhitungan statis.")
+        outlook = "rendah"
+        saran = (
+            "Daya beli masyarakat sedang tertekan. "
+            "UMKM disarankan untuk menerapkan strategi harga kompetitif, "
+            "mengurangi pengeluaran non-esensial, dan memperkuat penjualan melalui kanal digital "
+            "untuk menjangkau segmen pasar yang lebih luas."
+        )
 
-# Definisi skema Input JSON
-class PredictionRequest(BaseModel):
-    suku_bunga: float
-    indeks_saham: float
-    volume_transaksi_umkm: float = 12000.0  # Optional field dengan default value
-
-# Definisi skema Output JSON
-class PredictionResponse(BaseModel):
-    prediksi_daya_beli_score: float
-    status_daya_beli: str
-    rekomendasi_aksi: str
-
-@app.get("/")
-def read_root():
-    return {"message": "API Prediksi Daya Beli UMKM berjalan. Akses /docs untuk melihat dokumentasi interaktif Swagger UI."}
-
-@app.post("/predict", response_model=PredictionResponse)
-def predict_daya_beli(data: PredictionRequest):
-    # Model Random Forest kita membutuhkan 5 fitur:
-    # ['Suku_Bunga', 'Indeks_Saham', 'Volume_Transaksi_UMKM', 'MA_7_Indeks_Saham', 'MA_30_Suku_Bunga']
-    # Kita mengaproksimasi MA_7 dan MA_30 menggunakan input point-in-time saat ini
-    features = np.array([[
-        data.suku_bunga,
-        data.indeks_saham,
-        data.volume_transaksi_umkm,
-        data.indeks_saham, # Aproksimasi MA 7 hari
-        data.suku_bunga    # Aproksimasi MA 30 hari
-    ]])
-    
-    # Lakukan prediksi menggunakan model ML yang sudah di-training, atau gunakan fallback statis jika tidak ada
-    if model is not None:
-        prediksi_score = float(model.predict(features)[0])
-    else:
-        # Fallback perhitungan kasar jika model .pkl belum di-generate
-        prediksi_score = 100 - (data.suku_bunga * 5) + (data.indeks_saham - 6000) * 0.01
-        
-    # Pastikan rentang skor 0-100
-    prediksi_score = max(0.0, min(100.0, prediksi_score))
-    
-    # -------------------------------------------------------------
-    # ACTIONABLE INSIGHTS GENERATOR (Logic Aturan Bisnis)
-    # -------------------------------------------------------------
-    if prediksi_score > 70:
-        status = "Tinggi"
-        rekomendasi = "Daya beli sedang sangat kuat! UMKM disarankan untuk agresif melakukan campaign promosi, tawarkan strategi upselling, dan rilis stok produk premium."
-    elif prediksi_score > 40:
-        status = "Sedang"
-        rekomendasi = "Daya beli moderat. Pertahankan operasional normal dengan fokus pada retensi pelanggan lama dan efisiensi biaya marketing."
-    else:
-        status = "Rendah"
-        rekomendasi = "Daya beli sedang melemah (Waspada). UMKM sebaiknya fokus menjual produk kebutuhan pokok (basic needs), tawarkan paket bundling ekonomis, dan perkuat cadangan kas (likuiditas)."
-        
-    return PredictionResponse(
-        prediksi_daya_beli_score=round(prediksi_score, 2),
-        status_daya_beli=status,
-        rekomendasi_aksi=rekomendasi
+    return (
+        f"Dengan Suku Bunga {suku_bunga:.2f}% dan Indeks Saham {indeks_saham:.0f}, "
+        f"prediksi Daya Beli Score adalah {score:.2f} (kategori: {outlook}). "
+        f"{saran}"
     )
+
+
+# ── Endpoints ────────────────────────────────────────────────────────────────
+@app.get("/")
+def health_check():
+    """Endpoint sederhana untuk mengecek status server."""
+    return {
+        "status": "ok",
+        "message": "Ekonomi Makro Prediction API is running.",
+        "model": "RandomForestRegressor",
+        "features": ["Suku_Bunga", "Indeks_Saham"],
+        "target": "Daya_Beli_Score",
+    }
+
+
+@app.post("/predict")
+def predict(data: MacroInput):
+    """
+    Menerima input Suku_Bunga dan Indeks_Saham,
+    mengembalikan prediksi Daya_Beli_Score beserta rekomendasi strategis.
+    """
+    features = np.array([[data.Suku_Bunga, data.Indeks_Saham]])
+    prediction = float(model.predict(features)[0])
+
+    rekomendasi = generate_rekomendasi(data.Suku_Bunga, data.Indeks_Saham, prediction)
+
+    return {
+        "input": {
+            "Suku_Bunga": data.Suku_Bunga,
+            "Indeks_Saham": data.Indeks_Saham,
+        },
+        "prediksi": {
+            "Daya_Beli_Score": round(prediction, 4),
+        },
+        "rekomendasi_strategis": rekomendasi,
+    }
